@@ -1,84 +1,159 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { Shield, Users, MessageSquare, CreditCard, BarChart3, LogOut, Menu, DollarSign, Activity, Key, Settings } from 'lucide-react';
 import axios from 'axios';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const [admin, setAdmin] = useState<any>(null);
+  const pathname = usePathname();
+  const [admin, setAdmin] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem('adminToken');
-    if (!token) { router.push('/admin/login'); return; }
+    if (!token) {
+      // Show login form if no token
+      setLoading(false);
+      return;
+    }
+    // ★ THE KEY FIX — set base URL for all admin axios calls
+    axios.defaults.baseURL = 'https://hunters-api-gnyg.onrender.com';
     axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-    setAdmin({ username: localStorage.getItem('adminUsername') || 'Admin' });
-    setLoading(false);
+
+    // Verify token by fetching overview
+    axios.get('/api/admin/overview')
+      .then(() => setAdmin({ username: 'admin' }))
+      .catch(() => {
+        localStorage.removeItem('adminToken');
+      })
+      .finally(() => setLoading(false));
   }, []);
 
-  function handleLogout() {
-    localStorage.removeItem('adminToken');
-    localStorage.removeItem('adminUsername');
-    router.push('/admin/login');
+  // If no token, show admin login form
+  if (!localStorage.getItem('adminToken')) {
+    return <AdminLogin />;
   }
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center bg-dark-900"><div className="animate-spin rounded-full h-8 w-8 border-t-2 border-amber-500" /></div>;
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-dark-900 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-accent"></div>
+      </div>
+    );
+  }
 
   const navItems = [
-    { icon: BarChart3, label: 'Dashboard', href: '/admin' },
-    { icon: Users, label: 'Users', href: '/admin/users' },
-    { icon: Key, label: 'Accounts (Keys)', href: '/admin/accounts' },
-    { icon: MessageSquare, label: 'Campaigns', href: '/admin/campaigns' },
-    { icon: CreditCard, label: 'Subscriptions', href: '/admin/subscriptions' },
-    { icon: DollarSign, label: 'Pricing', href: '/admin/pricing' },
-    { icon: Settings, label: 'LTC Settings', href: '/admin/ltc-settings' },
-    { icon: Activity, label: 'System Status', href: '/admin/status' },
+    { label: 'Overview', href: '/admin' },
+    { label: 'Users', href: '/admin/users' },
+    { label: 'Accounts', href: '/admin/accounts' },
+    { label: 'Campaigns', href: '/admin/campaigns' },
+    { label: 'Pricing', href: '/admin/pricing' },
+    { label: 'Subscriptions', href: '/admin/subscription' },
+    { label: 'Status', href: '/admin/status' },
   ];
 
   return (
-    <div className="min-h-screen bg-dark-900 flex">
-      <aside className={`fixed lg:static inset-y-0 left-0 z-40 w-64 bg-dark-800 border-r border-dark-600 transform transition-transform duration-200 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
-        <div className="p-4 border-b border-dark-600">
-          <Link href="/admin" className="flex items-center gap-2">
-            <Shield className="w-8 h-8 text-amber-500" />
-            <span className="text-lg font-bold">Hunter's<span className="text-dark-100">Admin</span></span>
-          </Link>
-        </div>
-        <nav className="p-4 space-y-1">
-          {navItems.map((item) => (
-            <Link key={item.href} href={item.href} onClick={() => setSidebarOpen(false)}
-              className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-dark-100 hover:text-amber-400 hover:bg-dark-700 transition-all">
-              <item.icon className="w-5 h-5" /><span>{item.label}</span>
-            </Link>
-          ))}
-        </nav>
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-dark-600">
-          <div className="flex items-center gap-3 px-3 py-2">
-            <div className="w-8 h-8 rounded-full bg-amber-900/50 flex items-center justify-center text-sm font-bold text-amber-400">{admin?.username?.charAt(0).toUpperCase()}</div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium truncate">{admin?.username}</div>
-              <div className="text-xs text-amber-500">Admin</div>
-            </div>
-            <button onClick={handleLogout} className="text-dark-100 hover:text-red-400 transition-colors"><LogOut className="w-4 h-4" /></button>
+    <div className="min-h-screen bg-dark-900">
+      <div className="flex">
+        {/* Sidebar */}
+        <aside className="w-64 bg-dark-800 min-h-screen p-4 border-r border-dark-700">
+          <h2 className="text-lg font-bold text-accent mb-6">Admin Panel</h2>
+          <nav className="flex flex-col gap-2">
+            {navItems.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`px-3 py-2.5 rounded-lg text-sm transition-all ${
+                  pathname === item.href
+                    ? 'bg-accent/10 text-accent'
+                    : 'text-dark-100 hover:text-accent hover:bg-dark-700'
+                }`}
+              >
+                {item.label}
+              </Link>
+            ))}
+          </nav>
+          <div className="mt-auto pt-4 border-t border-dark-700">
+            <button
+              onClick={() => {
+                localStorage.removeItem('adminToken');
+                router.push('/admin');
+              }}
+              className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-dark-700 rounded-lg"
+            >
+              Logout
+            </button>
           </div>
-        </div>
-      </aside>
+        </aside>
+        {/* Main content */}
+        <main className="flex-1 p-8 overflow-auto">
+          {children}
+        </main>
+      </div>
+    </div>
+  );
+}
 
-      {sidebarOpen && <div className="fixed inset-0 bg-black/50 z-30 lg:hidden" onClick={() => setSidebarOpen(false)} />}
+function AdminLogin() {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const router = useRouter();
 
-      <div className="flex-1 min-w-0">
-        <header className="sticky top-0 z-20 bg-dark-900/80 backdrop-blur-sm border-b border-dark-600 px-4 h-16 flex items-center">
-          <button className="lg:hidden" onClick={() => setSidebarOpen(true)}><Menu className="w-6 h-6" /></button>
-          <div className="flex items-center gap-2 ml-auto">
-            <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-            <span className="text-xs text-dark-100">Admin Panel</span>
+  async function handleLogin(e) {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      const { data } = await axios.post('https://hunters-api-gnyg.onrender.com/api/admin/auth/login', {
+        username, password
+      });
+      localStorage.setItem('adminToken', data.token);
+      window.location.href = '/admin';
+    } catch (err) {
+      setError(err.response?.data?.error || 'Login failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-dark-900 flex items-center justify-center">
+      <div className="bg-dark-800 p-8 rounded-xl w-full max-w-md border border-dark-700">
+        <h1 className="text-2xl font-bold text-white mb-6">Admin Login</h1>
+        {error && (
+          <div className="bg-red-500/10 border border-red-500 text-red-400 px-4 py-2 rounded-lg mb-4 text-sm">
+            {error}
           </div>
-        </header>
-        <main className="p-4 md:p-6 lg:p-8">{children}</main>
+        )}
+        <form onSubmit={handleLogin} className="flex flex-col gap-4">
+          <input
+            type="text"
+            placeholder="Username"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            className="bg-dark-700 border border-dark-600 rounded-lg px-4 py-2.5 text-white placeholder-dark-300 focus:outline-none focus:border-accent"
+            required
+          />
+          <input
+            type="password"
+            placeholder="Password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="bg-dark-700 border border-dark-600 rounded-lg px-4 py-2.5 text-white placeholder-dark-300 focus:outline-none focus:border-accent"
+            required
+          />
+          <button
+            type="submit"
+            disabled={loading}
+            className="bg-accent hover:bg-accent/90 text-white font-semibold py-2.5 rounded-lg transition-all disabled:opacity-50"
+          >
+            {loading ? 'Signing in...' : 'Sign In'}
+          </button>
+        </form>
       </div>
     </div>
   );
