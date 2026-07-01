@@ -1,3 +1,4 @@
+import { scheduleCampaign } from './workers/campaignRunner';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -55,6 +56,9 @@ async function start() {
   await connectDatabase();
   await seedAdmin();
 
+// Start campaign worker
+import('./workers/campaignRunner');
+  
   app.listen(config.port, '0.0.0.0', () => {
     console.log(`[Server] Running on port ${config.port}`);
 
