@@ -22,7 +22,7 @@ function LoginContent() {
     setError('');
     try {
       // ★ FIXED: use full backend URL instead of relative path
-      const { data } = await axios.post(``https://hunters-api-gnyg.onrender.com/api/auth/discord/callback``, { code });
+      const { data } = await axios.post(`https://hunters-api-gnyg.onrender.com/api/auth/discord/callback`, { code });
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       router.push('/dashboard');
@@ -34,7 +34,7 @@ function LoginContent() {
   }
 
   function loginWithDiscord() {
-    window.location.href = ``https://hunters-api-gnyg.onrender.com/api/auth/discord/callback``;
+    window.location.href = `https://hunters-api-gnyg.onrender.com/api/auth/discord/callback`;
   }
 
   return (
