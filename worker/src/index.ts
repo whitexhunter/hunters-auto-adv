@@ -1,3 +1,12 @@
+// Tiny HTTP server to keep Render happy (free web services need an HTTP listener)
+import http from 'http';
+const PORT = process.env.PORT || 4001;
+http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ status: 'worker-ok' }));
+}).listen(PORT, () => {
+  console.log(`[Ping] Health server running on port ${PORT}`);
+});
 import Queue from 'bull';
 import mongoose from 'mongoose';
 import { Client } from 'discord.js-selfbot-v13';
