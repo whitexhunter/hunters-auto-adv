@@ -34,7 +34,7 @@ function LoginContent() {
   }
 
 function loginWithDiscord() {
-    window.location.href = `https://discord.com/api/oauth2/authorize?client_id=1521580216210686155&redirect_uri=${encodeURIComponent('https://hunters-auto-adv.vercel.app/login')}&response_type=code&scope=identify%20email`;
+    window.location.href = `https://hunters-api-gnyg.onrender.com/api/auth/discord`;
 }
 
   return (
