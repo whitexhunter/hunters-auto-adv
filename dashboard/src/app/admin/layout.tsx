@@ -5,43 +5,50 @@ import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import axios from 'axios';
 
+// ★ PREVENT SSR — don't try to prerender this
+export const dynamic = 'force-dynamic';
+
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const [admin, setAdmin] = useState(null);
+  const [admin, setAdmin] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [hasToken, setHasToken] = useState<boolean | null>(null); // null = unknown yet
 
   useEffect(() => {
+    // ★ Only access localStorage inside useEffect (client-side only)
     const token = localStorage.getItem('adminToken');
     if (!token) {
-      // Show login form if no token
+      setHasToken(false);
       setLoading(false);
       return;
     }
-    // ★ THE KEY FIX — set base URL for all admin axios calls
+    setHasToken(true);
+
     axios.defaults.baseURL = 'https://hunters-api-gnyg.onrender.com';
     axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
 
-    // Verify token by fetching overview
     axios.get('/api/admin/overview')
       .then(() => setAdmin({ username: 'admin' }))
       .catch(() => {
         localStorage.removeItem('adminToken');
+        setHasToken(false);
       })
       .finally(() => setLoading(false));
   }, []);
 
-  // If no token, show admin login form
-  if (!localStorage.getItem('adminToken')) {
-    return <AdminLogin />;
-  }
-
-  if (loading) {
+  // Still loading (initial render / checking token)
+  if (hasToken === null || loading) {
     return (
       <div className="min-h-screen bg-dark-900 flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-accent"></div>
       </div>
     );
+  }
+
+  // No token — show login form
+  if (!hasToken) {
+    return <AdminLogin onLogin={() => setHasToken(true)} />;
   }
 
   const navItems = [
@@ -57,7 +64,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   return (
     <div className="min-h-screen bg-dark-900">
       <div className="flex">
-        {/* Sidebar */}
         <aside className="w-64 bg-dark-800 min-h-screen p-4 border-r border-dark-700">
           <h2 className="text-lg font-bold text-accent mb-6">Admin Panel</h2>
           <nav className="flex flex-col gap-2">
@@ -87,7 +93,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             </button>
           </div>
         </aside>
-        {/* Main content */}
         <main className="flex-1 p-8 overflow-auto">
           {children}
         </main>
@@ -96,14 +101,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   );
 }
 
-function AdminLogin() {
+function AdminLogin({ onLogin }: { onLogin: () => void }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const router = useRouter();
 
-  async function handleLogin(e) {
+  async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError('');
@@ -112,8 +116,9 @@ function AdminLogin() {
         username, password
       });
       localStorage.setItem('adminToken', data.token);
-      window.location.href = '/admin';
-    } catch (err) {
+      axios.defaults.headers.common['Authorization'] = `Bearer ${data.token}`;
+      onLogin();
+    } catch (err: any) {
       setError(err.response?.data?.error || 'Login failed');
     } finally {
       setLoading(false);
