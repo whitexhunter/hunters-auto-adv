@@ -1,11 +1,7 @@
 import axios from 'axios';
 
-// Create axios instance with default config
 const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || 
-    (typeof window !== 'undefined' && window.location.hostname !== 'localhost' 
-      ? 'https://hunters-api-gnyg.onrender.com' 
-      : 'http://localhost:4000'),
+  baseURL: 'https://hunters-api-gnyg.onrender.com',
   headers: {
     'Content-Type': 'application/json',
   },
