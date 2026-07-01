@@ -20,7 +20,7 @@ services:
       - key: DISCORD_CLIENT_SECRET
         sync: false
       - key: DISCORD_REDIRECT_URI
-        value: https://hunters-api.onrender.com/api/auth/discord/callback
+        value: https://hunters-api-gnyg.onrender.com/api/auth/discord/callback
     healthCheckPath: /api/health
 
   - type: worker
