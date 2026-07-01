@@ -14,6 +14,14 @@ router.get('/', async (req: AuthRequest, res: Response) => {
   } catch { res.status(500).json({ error: 'Failed to fetch campaigns' }); }
 });
 
+import { scheduleCampaign } from '../workers/campaignRunner';
+
+// In the PATCH /:id/status endpoint, after setting status to 'running':
+if (status === 'running') {
+  await DiscordAccount.findByIdAndUpdate(campaign.accountId, { lastUsed: new Date() });
+  scheduleCampaign(campaign._id.toString(), campaign.type === 'dm_auto_reply' ? 'auto_reply' : 'send');
+}
+
 router.post('/', async (req: AuthRequest, res: Response) => {
   try {
     const { name, type, accountId, channels, messages, schedule, replyTrigger, sendAllAtOnce } = req.body;
