@@ -21,7 +21,8 @@ function LoginContent() {
     setLoading(true);
     setError('');
     try {
-      const { data } = await axios.post('/api/auth/discord/callback', { code });
+      // ★ FIXED: use full backend URL instead of relative path
+      const { data } = await axios.post(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000'}/api/auth/discord/callback`, { code });
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       router.push('/dashboard');
