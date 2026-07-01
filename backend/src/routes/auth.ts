@@ -17,6 +17,16 @@ router.get('/discord', (_req: Request, res: Response) => {
   res.redirect(`https://discord.com/api/oauth2/authorize?${params.toString()}`);
 });
 
+// ★ NEW: Handle GET callback from Discord redirect
+router.get('/discord/callback', (req: Request, res: Response) => {
+  const { code } = req.query;
+  if (!code) {
+    return res.status(400).json({ error: 'Authorization code required' });
+  }
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  res.redirect(`${frontendUrl}/login?code=${code}`);
+});
+
 router.post('/discord/callback', authLimiter, async (req: Request, res: Response) => {
   try {
     const { code } = req.body;
