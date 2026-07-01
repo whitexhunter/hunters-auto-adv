@@ -16,7 +16,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const token = localStorage.getItem('token');
     if (!token) { router.push('/login'); return; }
 
-    axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+    axios.defaults.baseURL = 'https://hunters-api-gnyg.onrender.com';
+axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
     axios.get('/api/auth/me')
       .then(({ data }) => setUser(data.user))
       .catch(() => { localStorage.removeItem('token'); router.push('/login'); })
