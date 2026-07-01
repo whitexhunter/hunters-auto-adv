@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  mongo:
+    image: mongo:7
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: veiled
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  backend:
+    build: ./backend
+    ports:
+      - "4000:4000"
+    env_file: .env
+    depends_on:
+      - mongo
+      - redis
+    volumes:
+      - ./backend/src:/app/src
+    command: npm run dev
+
+  dashboard:
+    build: ./dashboard
+    ports:
+      - "3000:3000"
+    env_file: .env
+    depends_on:
+      - backend
+    volumes:
+      - ./dashboard/src:/app/src
+    command: npm run dev
+
+  worker:
+    build: ./worker
+    env_file: .env
+    depends_on:
+      - mongo
+      - redis
+      - backend
+    restart: always
+    command: npm run start
+
+volumes:
+  mongo_data:
+  redis_data:
