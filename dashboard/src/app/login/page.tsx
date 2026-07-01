@@ -33,9 +33,9 @@ function LoginContent() {
     }
   }
 
-  function loginWithDiscord() {
-    window.location.href = `https://hunters-api-gnyg.onrender.com/api/auth/discord/callback`;
-  }
+function loginWithDiscord() {
+    window.location.href = `https://discord.com/api/oauth2/authorize?client_id=YOUR_CLIENT_ID&redirect_uri=${encodeURIComponent('https://hunters-auto-adv.vercel.app/login')}&response_type=code&scope=identify%20email`;
+}
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 flex items-center justify-center p-4">
