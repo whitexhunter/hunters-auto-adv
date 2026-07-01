@@ -21,7 +21,7 @@ app.use(cors({
   origin: [
     'http://localhost:3000',
     'https://hunters-auto-adv.vercel.app',
-    'https://hunters-api.onrender.com',
+    'https://hunters-api-gnyg.onrender.com',
     process.env.CORS_ORIGIN || '',
   ].filter(Boolean),
   credentials: true,
