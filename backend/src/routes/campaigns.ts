@@ -3,6 +3,7 @@ import { AuthRequest, authMiddleware } from '../middleware/auth';
 import { Campaign } from '../models/Campaign';
 import { DiscordAccount } from '../models/DiscordAccount';
 import { User, PLAN_CONFIG } from '../models/User';
+import { scheduleCampaign } from '../workers/campaignRunner';
 
 const router = Router();
 router.use(authMiddleware);
@@ -13,14 +14,6 @@ router.get('/', async (req: AuthRequest, res: Response) => {
     res.json({ campaigns });
   } catch { res.status(500).json({ error: 'Failed to fetch campaigns' }); }
 });
-
-import { scheduleCampaign } from '../workers/campaignRunner';
-
-// In the PATCH /:id/status endpoint, after setting status to 'running':
-if (status === 'running') {
-  await DiscordAccount.findByIdAndUpdate(campaign.accountId, { lastUsed: new Date() });
-  scheduleCampaign(campaign._id.toString(), campaign.type === 'dm_auto_reply' ? 'auto_reply' : 'send');
-}
 
 router.post('/', async (req: AuthRequest, res: Response) => {
   try {
@@ -51,9 +44,16 @@ router.patch('/:id/status', async (req: AuthRequest, res: Response) => {
     const { status } = req.body;
     const campaign = await Campaign.findOneAndUpdate({ _id: req.params.id, userId: req.userId }, { status }, { new: true });
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
-    if (status === 'running') await DiscordAccount.findByIdAndUpdate(campaign.accountId, { lastUsed: new Date() });
+    if (status === 'running') {
+      await DiscordAccount.findByIdAndUpdate(campaign.accountId, { lastUsed: new Date() });
+      // Schedule the campaign to actually send messages
+      scheduleCampaign(campaign._id.toString(), campaign.type === 'dm_auto_reply' ? 'auto_reply' : 'send');
+    }
     res.json({ campaign });
-  } catch { res.status(500).json({ error: 'Failed to update campaign status' }); }
+  } catch (err) {
+    console.error('[Campaign] Status update error:', err);
+    res.status(500).json({ error: 'Failed to update campaign status' });
+  }
 });
 
 router.delete('/:id', async (req: AuthRequest, res: Response) => {
