@@ -3,10 +3,11 @@ import { AuthRequest, authMiddleware } from '../middleware/auth';
 import { Campaign } from '../models/Campaign';
 import { DiscordAccount } from '../models/DiscordAccount';
 import { User, PLAN_CONFIG } from '../models/User';
-import { scheduleCampaign } from '../workers/campaignRunner';
 
 const router = Router();
 router.use(authMiddleware);
+
+const WORKER_URL = process.env.WORKER_URL || 'https://hunters-worker.onrender.com';
 
 router.get('/', async (req: AuthRequest, res: Response) => {
   try {
@@ -46,8 +47,12 @@ router.patch('/:id/status', async (req: AuthRequest, res: Response) => {
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
     if (status === 'running') {
       await DiscordAccount.findByIdAndUpdate(campaign.accountId, { lastUsed: new Date() });
-      // Schedule the campaign to actually send messages
-      scheduleCampaign(campaign._id.toString(), campaign.type === 'dm_auto_reply' ? 'auto_reply' : 'send');
+      // Notify the worker via HTTP instead of Redis
+      fetch(`${WORKER_URL}/process-campaign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ campaignId: campaign._id.toString() }),
+      }).catch(err => console.error('[Campaign] Worker notify failed:', err.message));
     }
     res.json({ campaign });
   } catch (err) {
