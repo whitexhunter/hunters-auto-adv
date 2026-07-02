@@ -455,18 +455,18 @@ db = client[db_name]
 
 log.info(f"Connected to MongoDB, using database: {db_name}")
 
-    sm = SelfbotManager()
+sm = SelfbotManager()
 
-    # Handle shutdown
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, lambda: asyncio.create_task(cleanup(sm)))
-
-    # Start HTTP server and polling loop
-    await asyncio.gather(
-        run_http_server(),
-        poll_loop(sm),
-    )
+# Handle shutdown
+loop = asyncio.get_running_loop()
+for sig in (signal.SIGTERM, signal.SIGINT):
+    loop.add_signal_handler(sig, lambda: asyncio.create_task(cleanup(sm)))
+    
+# Start HTTP server and polling loop
+await asyncio.gather(
+    run_http_server(),
+    poll_loop(sm),
+)
 
 
 if __name__ == "__main__":
