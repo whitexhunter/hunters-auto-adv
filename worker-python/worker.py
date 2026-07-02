@@ -469,19 +469,18 @@ async def main():
     log.info(f"Connecting to MongoDB...")
     client = pymongo.AsyncMongoClient(MONGODB_URI)
 
-    parsed = urlparse(MONGODB_URI)
-    db_name = parsed.path.lstrip("/") if parsed.path and parsed.path != "/" else "veiled"
-    db = client[db_name]
+    # Use get_default_database() which correctly parses the db name from ANY URI type
+    db = client.get_default_database()
 
     try:
         await client.admin.command("ping")
+        # Get the actual database name being used
+        db_name = db.name
         log.info(f"Connected to MongoDB, using database: '{db_name}'")
         
-        # Verify collections exist
         collections = await db.list_collection_names()
         log.info(f"Collections in database: {collections}")
         
-        # Count campaigns
         campaign_count = await db.campaigns.count_documents({})
         account_count = await db.discordaccounts.count_documents({})
         log.info(f"Found {campaign_count} campaigns and {account_count} Discord accounts in DB")
