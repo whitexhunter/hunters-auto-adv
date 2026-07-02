@@ -1,4 +1,3 @@
-import './workers/campaignRunner';
 import { scheduleCampaign } from './workers/campaignRunner';
 import express from 'express';
 import cors from 'cors';
