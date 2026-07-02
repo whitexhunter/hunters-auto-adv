@@ -1,4 +1,3 @@
-import { scheduleCampaign } from './workers/campaignRunner';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -30,10 +29,8 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(apiLimiter);
 
-// Public routes
+// Routes
 app.use('/api/auth', authRoutes);
-
-// Protected routes
 app.use('/api/accounts', accountRoutes);
 app.use('/api/campaigns', campaignRoutes);
 app.use('/api/billing', billingRoutes);
@@ -56,21 +53,6 @@ async function start() {
   await connectDatabase();
   await seedAdmin();
 
-async function start() {
-  await connectDatabase();
-  await seedAdmin();
-
-  // Start the campaign queue worker
-  import('./workers/campaignRunner');
-  
-  app.listen(config.port, '0.0.0.0', () => {
-    // ...
-  });
-}
-  
-// Start campaign worker
-import('./workers/campaignRunner');
-  
   app.listen(config.port, '0.0.0.0', () => {
     console.log(`[Server] Running on port ${config.port}`);
 
