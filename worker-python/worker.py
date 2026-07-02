@@ -454,7 +454,6 @@ db_name = parsed.path.lstrip("/") if parsed.path and parsed.path != "/" else "ve
 db = client[db_name]
 
 log.info(f"Connected to MongoDB, using database: {db_name}")
-    log.info("Connected to MongoDB")
 
     sm = SelfbotManager()
 
