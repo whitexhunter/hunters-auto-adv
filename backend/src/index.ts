@@ -1,3 +1,4 @@
+import './workers/campaignRunner';
 import { scheduleCampaign } from './workers/campaignRunner';
 import express from 'express';
 import cors from 'cors';
@@ -56,6 +57,18 @@ async function start() {
   await connectDatabase();
   await seedAdmin();
 
+async function start() {
+  await connectDatabase();
+  await seedAdmin();
+
+  // Start the campaign queue worker
+  import('./workers/campaignRunner');
+  
+  app.listen(config.port, '0.0.0.0', () => {
+    // ...
+  });
+}
+  
 // Start campaign worker
 import('./workers/campaignRunner');
   
