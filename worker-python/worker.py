@@ -12,12 +12,15 @@ import os
 import asyncio
 import json
 import logging
+import random
 import signal
 import sys
 from datetime import datetime, timezone
-from base64 import b64decode, b64encode
+from base64 import b64decode
+from urllib.parse import urlparse
 
 import pymongo
+from bson import ObjectId
 import discord
 from discord.ext import commands
 
@@ -36,12 +39,14 @@ log = logging.getLogger("worker")
 
 
 # --- CryptoJS-compatible AES decrypt ---
-# CryptoJS.AES.encrypt(token, passphrase) uses:
-#   - PBKDF2 with 1 iteration, random salt (8 bytes)
-#   - AES-256-CBC
-#   - Output format: Base64("Salted__" + salt + ciphertext)
 def cryptojs_aes_decrypt(ciphertext_b64: str, passphrase: str) -> str:
-    """Decrypt a CryptoJS AES passphrase-encrypted string."""
+    """Decrypt a CryptoJS AES passphrase-encrypted string.
+    
+    CryptoJS.AES.encrypt(token, passphrase) uses:
+      - PBKDF2 with 1 iteration, random salt (8 bytes)
+      - AES-256-CBC
+      - Output format: Base64("Salted__" + salt + ciphertext)
+    """
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -53,10 +58,9 @@ def cryptojs_aes_decrypt(ciphertext_b64: str, passphrase: str) -> str:
     salt = raw[8:16]
     ciphertext = raw[16:]
 
-    # PBKDF2 key derivation (same as CryptoJS with 1 iteration)
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
-        length=48,  # 32 key + 16 iv
+        length=48,
         salt=salt,
         iterations=1,
     )
@@ -68,7 +72,6 @@ def cryptojs_aes_decrypt(ciphertext_b64: str, passphrase: str) -> str:
     decryptor = cipher.decryptor()
     padded = decryptor.update(ciphertext) + decryptor.finalize()
 
-    # Remove PKCS7 padding
     pad_len = padded[-1]
     return padded[:-pad_len].decode("utf-8")
 
@@ -77,9 +80,8 @@ def cryptojs_aes_decrypt(ciphertext_b64: str, passphrase: str) -> str:
 class SelfbotManager:
     def __init__(self):
         self.clients: dict[str, commands.Bot] = {}
-        self._reply_listeners_active = set()
 
-    async def login(self, account_id: str, token: str) -> commands.Bot | None:
+    async def login(self, account_id: str, token: str, db) -> commands.Bot | None:
         """Login a Discord selfbot account."""
         if account_id in self.clients:
             try:
@@ -104,19 +106,20 @@ class SelfbotManager:
             @bot.event
             async def on_ready():
                 log.info(f"[{account_id}] Logged in as {bot.user} (ID: {bot.user.id})")
-                # Update MongoDB: set isOnline=True
-                await db.discordaccounts.update_one(
-                    {"_id": pymongo.ObjectId(account_id)},
-                    {"$set": {"isOnline": True, "status": "active"}},
-                )
+                try:
+                    await db.discordaccounts.update_one(
+                        {"_id": ObjectId(account_id)},
+                        {"$set": {"isOnline": True, "status": "active"}},
+                    )
+                except Exception:
+                    pass
 
             @bot.event
             async def on_message(message):
                 if message.author.id == bot.user.id:
                     return
-                await self._handle_auto_reply(account_id, message)
+                await self._handle_auto_reply(account_id, message, db)
 
-            # Login with timeout
             await asyncio.wait_for(bot.start(token), timeout=20.0)
             self.clients[account_id] = bot
             return bot
@@ -126,17 +129,16 @@ class SelfbotManager:
         except Exception as e:
             log.error(f"[{account_id}] Login failed: {e}")
 
-        # Mark as offline on failure
         try:
             await db.discordaccounts.update_one(
-                {"_id": pymongo.ObjectId(account_id)},
+                {"_id": ObjectId(account_id)},
                 {"$set": {"isOnline": False, "status": "disabled"}},
             )
         except Exception:
             pass
         return None
 
-    async def disconnect(self, account_id: str):
+    async def disconnect(self, account_id: str, db):
         """Disconnect a selfbot."""
         if account_id in self.clients:
             try:
@@ -146,7 +148,7 @@ class SelfbotManager:
             del self.clients[account_id]
         try:
             await db.discordaccounts.update_one(
-                {"_id": pymongo.ObjectId(account_id)},
+                {"_id": ObjectId(account_id)},
                 {"$set": {"isOnline": False}},
             )
         except Exception:
@@ -166,11 +168,11 @@ class SelfbotManager:
             log.error(f"[{account_id}] Failed to send to {channel_id}: {e}")
             return False
 
-    async def _handle_auto_reply(self, account_id: str, message: discord.Message):
+    async def _handle_auto_reply(self, account_id: str, message: discord.Message, db):
         """Check for DM auto-reply campaigns and reply if triggered."""
         try:
             campaigns_cursor = db.campaigns.find({
-                "accountId": pymongo.ObjectId(account_id),
+                "accountId": ObjectId(account_id),
                 "type": "dm_auto_reply",
                 "status": "running",
             })
@@ -181,15 +183,12 @@ class SelfbotManager:
                 messages = campaign.get("messages", [])
                 if not messages:
                     continue
-                # Pick a random message from the campaign
-                import random
                 reply_msg = random.choice(messages)
                 content = reply_msg.get("content", "")
                 if not content:
                     continue
                 try:
                     await message.reply(content)
-                    # Update stats
                     await db.campaigns.update_one(
                         {"_id": campaign["_id"]},
                         {"$inc": {"stats.replied": 1}},
@@ -202,16 +201,16 @@ class SelfbotManager:
 
 
 # --- Campaign Processor ---
-async def process_campaign(campaign_id: str, sm: SelfbotManager):
+async def process_campaign(campaign_id: str, sm: SelfbotManager, db):
     """Process a single campaign: login if needed, send messages."""
     try:
-        campaign = await db.campaigns.find_one({"_id": pymongo.ObjectId(campaign_id)})
+        campaign = await db.campaigns.find_one({"_id": ObjectId(campaign_id)})
         if not campaign or campaign.get("status") != "running":
             log.info(f"Campaign {campaign_id} not found or not running, skipping")
             return
 
         account_id = str(campaign["accountId"])
-        account = await db.discordaccounts.find_one({"_id": pymongo.ObjectId(account_id)})
+        account = await db.discordaccounts.find_one({"_id": ObjectId(account_id)})
         if not account:
             log.error(f"Account {account_id} not found for campaign {campaign_id}")
             await db.campaigns.update_one(
@@ -234,19 +233,18 @@ async def process_campaign(campaign_id: str, sm: SelfbotManager):
         # Login if not already connected
         bot = sm.clients.get(account_id)
         if not bot or not bot.user:
-            bot = await sm.login(account_id, token)
+            bot = await sm.login(account_id, token, db)
             if not bot:
                 await db.campaigns.update_one(
                     {"_id": campaign["_id"]},
                     {"$set": {"status": "failed"}},
                 )
                 return
-            # Small delay to ensure the client is ready
             await asyncio.sleep(2)
 
         # Update lastUsed
         await db.discordaccounts.update_one(
-            {"_id": pymongo.ObjectId(account_id)},
+            {"_id": ObjectId(account_id)},
             {"$set": {"lastUsed": datetime.now(timezone.utc)}},
         )
 
@@ -274,33 +272,31 @@ async def process_campaign(campaign_id: str, sm: SelfbotManager):
                             {"$inc": {"stats.failed": 1}},
                         )
                     if delay and delay > 0 and not send_all:
-                        await asyncio.sleep(delay / 1000)  # delay is in ms
+                        await asyncio.sleep(delay / 1000)
 
-        # Handle recurring schedule
+        # Handle schedule
         schedule = campaign.get("schedule", {})
         if schedule.get("type") == "recurring" and schedule.get("intervalMinutes"):
-            interval_ms = schedule["intervalMinutes"] * 60 * 1000
+            next_run_ts = datetime.now(timezone.utc).timestamp() + (schedule["intervalMinutes"] * 60)
             end_at = schedule.get("endAt")
-            now_ms = datetime.now(timezone.utc).timestamp() * 1000
-            if not end_at or (now_ms + interval_ms < end_at.timestamp() * 1000):
-                # Re-queue by adding back to the poll (mark for re-process)
-                # We'll set a flag; the poll loop handles this
-                log.info(f"Campaign {campaign_id} will re-run in {schedule['intervalMinutes']} min")
-                # Store next run time on the campaign
-                next_run = datetime.now(timezone.utc).timestamp() + (schedule["intervalMinutes"] * 60)
-                await db.campaigns.update_one(
-                    {"_id": campaign["_id"]},
-                    {"$set": {"_nextRun": next_run}},
-                )
-            else:
-                await db.campaigns.update_one(
-                    {"_id": campaign["_id"]},
-                    {"$set": {"status": "completed"}},
-                )
-                log.info(f"Campaign {campaign_id} completed (schedule ended)")
+            if end_at:
+                if isinstance(end_at, datetime):
+                    end_ts = end_at.timestamp()
+                else:
+                    end_ts = end_at.timestamp() * 1000 if hasattr(end_at, 'timestamp') else float('inf')
+                if datetime.now(timezone.utc).timestamp() + (schedule["intervalMinutes"] * 60) > end_ts:
+                    await db.campaigns.update_one(
+                        {"_id": campaign["_id"]},
+                        {"$set": {"status": "completed"}},
+                    )
+                    log.info(f"Campaign {campaign_id} completed (schedule ended)")
+                    return
+            await db.campaigns.update_one(
+                {"_id": campaign["_id"]},
+                {"$set": {"_nextRun": next_run_ts}},
+            )
+            log.info(f"Campaign {campaign_id} will re-run in {schedule['intervalMinutes']} min")
         else:
-            # One-shot or immediate: mark completed
-            # Unless it's dm_auto_reply which stays running permanently
             if campaign_type != "dm_auto_reply":
                 await db.campaigns.update_one(
                     {"_id": campaign["_id"]},
@@ -312,23 +308,24 @@ async def process_campaign(campaign_id: str, sm: SelfbotManager):
         log.error(f"Failed to process campaign {campaign_id}: {e}")
         try:
             await db.campaigns.update_one(
-                {"_id": pymongo.ObjectId(campaign_id)},
+                {"_id": ObjectId(campaign_id)},
                 {"$set": {"status": "failed"}},
             )
         except Exception:
             pass
 
 
+# --- Globals ---
+pending_campaigns = []
+db = None
+
+
 # --- HTTP Health Check Server ---
 async def run_http_server():
-    """Simple HTTP health check endpoint."""
-    loop = asyncio.get_event_loop()
-
+    """Simple HTTP health check endpoint + process-campaign."""
     async def handle_client(reader, writer):
-        request_data = await reader.read(4096)
+        request_data = await reader.read(65536)
         request_text = request_data.decode("utf-8", errors="replace")
-
-        # Parse the request line
         lines = request_text.split("\r\n")
         if not lines:
             writer.close()
@@ -339,14 +336,12 @@ async def run_http_server():
         path = parts[1] if len(parts) > 1 else "/"
 
         if path == "/process-campaign" and "POST" in method_line:
-            # Parse JSON body
             body_start = request_text.find("\r\n\r\n") + 4
             body = request_text[body_start:] if body_start > 3 else "{}"
             try:
                 data = json.loads(body)
                 campaign_id = data.get("campaignId")
                 if campaign_id:
-                    # Add to the processing queue
                     pending_campaigns.append(campaign_id)
                     response = json.dumps({"queued": True, "campaignId": campaign_id})
                     writer.write(f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {len(response)}\r\n\r\n{response}".encode())
@@ -357,7 +352,6 @@ async def run_http_server():
                 response = json.dumps({"error": "Invalid JSON"})
                 writer.write(f"HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {len(response)}\r\n\r\n{response}".encode())
         else:
-            # Health check or anything else
             response = json.dumps({"status": "worker-ok"})
             writer.write(f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {len(response)}\r\n\r\n{response}".encode())
 
@@ -366,32 +360,24 @@ async def run_http_server():
 
     server = await asyncio.start_server(handle_client, "0.0.0.0", HTTP_PORT)
     log.info(f"HTTP server running on port {HTTP_PORT}")
-
     async with server:
         await server.serve_forever()
 
 
 # --- Main Polling Loop ---
-pending_campaigns = []
-db = None
-
-
 async def poll_loop(sm: SelfbotManager):
     """Poll MongoDB for running campaigns that need processing."""
     while True:
         try:
-            # 1. Process any HTTP-triggered campaigns
+            # Process HTTP-triggered campaigns
             while pending_campaigns:
                 cid = pending_campaigns.pop(0)
                 log.info(f"Processing HTTP-triggered campaign: {cid}")
-                await process_campaign(cid, sm)
+                await process_campaign(cid, sm, db)
 
-            # 2. Find running campaigns that need processing
             now = datetime.now(timezone.utc)
 
-            # Find channel_messaging campaigns that are running and either:
-            # - have no _nextRun (never processed), or
-            # - _nextRun is in the past
+            # Find channel_messaging campaigns that need processing
             campaigns_cursor = db.campaigns.find({
                 "status": "running",
                 "type": "channel_messaging",
@@ -404,9 +390,9 @@ async def poll_loop(sm: SelfbotManager):
             async for campaign in campaigns_cursor:
                 cid = str(campaign["_id"])
                 log.info(f"Poll picked up campaign: {campaign.get('name', cid)} ({cid})")
-                await process_campaign(cid, sm)
+                await process_campaign(cid, sm, db)
 
-            # 3. Also keep dm_auto_reply accounts logged in (they're event-driven)
+            # Keep dm_auto_reply accounts logged in
             reply_campaigns = db.campaigns.find({
                 "status": "running",
                 "type": "dm_auto_reply",
@@ -415,11 +401,11 @@ async def poll_loop(sm: SelfbotManager):
                 aid = str(rc["accountId"])
                 if aid not in sm.clients:
                     log.info(f"DM auto-reply campaign needs login for account {aid}")
-                    account = await db.discordaccounts.find_one({"_id": pymongo.ObjectId(aid)})
+                    account = await db.discordaccounts.find_one({"_id": ObjectId(aid)})
                     if account:
                         try:
                             token = cryptojs_aes_decrypt(account["token"], ENCRYPTION_KEY)
-                            await sm.login(aid, token)
+                            await sm.login(aid, token, db)
                         except Exception as e:
                             log.error(f"Auto-reply login failed for {aid}: {e}")
 
@@ -433,40 +419,40 @@ async def cleanup(sm: SelfbotManager):
     """Disconnect all selfbots on shutdown."""
     log.info("Shutting down...")
     for account_id in list(sm.clients.keys()):
-        await sm.disconnect(account_id)
+        await sm.disconnect(account_id, db)
 
 
 async def main():
     global db
 
-    # Connect to MongoDB
     if not MONGODB_URI:
         log.error("MONGODB_URI environment variable is required")
         sys.exit(1)
 
-from urllib.parse import urlparse
+    client = pymongo.AsyncMongoClient(MONGODB_URI)
 
-client = pymongo.AsyncMongoClient(MONGODB_URI)
+    parsed = urlparse(MONGODB_URI)
+    db_name = parsed.path.lstrip("/") if parsed.path and parsed.path != "/" else "veiled"
+    db = client[db_name]
 
-# Extract database name from the URI, default to "veiled" if not specified
-parsed = urlparse(MONGODB_URI)
-db_name = parsed.path.lstrip("/") if parsed.path and parsed.path != "/" else "veiled"
-db = client[db_name]
+    # Verify connection
+    try:
+        await client.admin.command("ping")
+        log.info(f"Connected to MongoDB, using database: {db_name}")
+    except Exception as e:
+        log.error(f"Failed to connect to MongoDB: {e}")
+        sys.exit(1)
 
-log.info(f"Connected to MongoDB, using database: {db_name}")
+    sm = SelfbotManager()
 
-sm = SelfbotManager()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, lambda: asyncio.create_task(cleanup(sm)))
 
-# Handle shutdown
-loop = asyncio.get_running_loop()
-for sig in (signal.SIGTERM, signal.SIGINT):
-    loop.add_signal_handler(sig, lambda: asyncio.create_task(cleanup(sm)))
-    
-# Start HTTP server and polling loop
-await asyncio.gather(
-    run_http_server(),
-    poll_loop(sm),
-)
+    await asyncio.gather(
+        run_http_server(),
+        poll_loop(sm),
+    )
 
 
 if __name__ == "__main__":
