@@ -444,8 +444,16 @@ async def main():
         log.error("MONGODB_URI environment variable is required")
         sys.exit(1)
 
-    client = pymongo.AsyncMongoClient(MONGODB_URI)
-    db = client.get_default_database()
+from urllib.parse import urlparse
+
+client = pymongo.AsyncMongoClient(MONGODB_URI)
+
+# Extract database name from the URI, default to "veiled" if not specified
+parsed = urlparse(MONGODB_URI)
+db_name = parsed.path.lstrip("/") if parsed.path and parsed.path != "/" else "veiled"
+db = client[db_name]
+
+log.info(f"Connected to MongoDB, using database: {db_name}")
     log.info("Connected to MongoDB")
 
     sm = SelfbotManager()
