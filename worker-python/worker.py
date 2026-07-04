@@ -458,32 +458,60 @@ async def main():
 
     log.info(f"Connecting to MongoDB...")
 
-    # 1. Create the MongoDB client
     client = pymongo.AsyncMongoClient(MONGODB_URI)
 
-    # 2. Get the database - try URI's db name, fall back to 'veiled'
+    # First, list all databases to find where the data actually is
+    try:
+        await client.admin.command("ping")
+        log.info("MongoDB ping successful")
+    except Exception as e:
+        log.error(f"Failed to ping MongoDB: {e}")
+        sys.exit(1)
+
+    # List all databases
+    try:
+        db_list = await client.list_database_names()
+        log.info(f"Available databases: {db_list}")
+    except Exception as e:
+        log.error(f"Failed to list databases: {e}")
+
+    # Try to get database name from URI, fall back to 'veiled'
     try:
         db = client.get_default_database()
+        log.info(f"Default database from URI: '{db.name}'")
     except Exception:
         db = client["veiled"]
         log.info("No database name in URI, using 'veiled' as default")
 
-    # 3. Verify connection
+    # Check what's in each database to find our data
+    for db_name in await client.list_database_names():
+        if db_name in ("admin", "local", "config"):
+            continue
+        test_db = client[db_name]
+        collections = await test_db.list_collection_names()
+        if "campaigns" in collections or "discordaccounts" in collections:
+            log.info(f"!!! FOUND DATA in database '{db_name}' with collections: {collections}")
+            # Check counts
+            c_count = await test_db.campaigns.count_documents({}) if "campaigns" in collections else 0
+            a_count = await test_db.discordaccounts.count_documents({}) if "discordaccounts" in collections else 0
+            log.info(f"!!! Database '{db_name}' has {c_count} campaigns and {a_count} Discord accounts")
+            if c_count > 0 or a_count > 0:
+                log.info(f"!!! THIS IS THE CORRECT DATABASE - update db to '{db_name}'")
+                db = test_db
+
+    # Log current state
+    db_name = db.name
     try:
-        await client.admin.command("ping")
-        db_name = db.name
-        log.info(f"Connected to MongoDB, using database: '{db_name}'")
-
         collections = await db.list_collection_names()
-        log.info(f"Collections in database: {collections}")
-
+        log.info(f"Currently using database: '{db_name}' with collections: {collections}")
         campaign_count = await db.campaigns.count_documents({})
         account_count = await db.discordaccounts.count_documents({})
-        log.info(f"Found {campaign_count} campaigns and {account_count} Discord accounts in DB")
-
+        log.info(f"Found {campaign_count} campaigns and {account_count} Discord accounts in current DB")
     except Exception as e:
-        log.error(f"Failed to connect to MongoDB: {e}")
-        sys.exit(1)
+        log.error(f"Error checking current database: {e}")
+
+    if campaign_count == 0:
+        log.warning("No campaigns found! Campaigns will not work until the correct database is configured.")
 
     sm = SelfbotManager()
 
