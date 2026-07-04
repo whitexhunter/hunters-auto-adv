@@ -457,7 +457,12 @@ async def main():
         sys.exit(1)
 
     log.info(f"Connecting to MongoDB...")
-    client = pymongo.AsyncMongoClient(MONGODB_URI)
+    # Try to get database name from URI, fall back to 'veiled'
+    try:
+        db = client.get_default_database()
+    except Exception:
+        db = client["veiled"]
+        log.info("No database name in URI, using 'veiled' as default")
 
     # Use get_default_database() which correctly parses db name from ANY URI
     db = client.get_default_database()
