@@ -17,7 +17,6 @@ import signal
 import sys
 from datetime import datetime, timezone
 from base64 import b64decode
-from urllib.parse import urlparse
 
 import pymongo
 from bson import ObjectId
@@ -327,17 +326,15 @@ async def process_campaign(campaign_id: str, sm: SelfbotManager, db):
 # --- Globals ---
 pending_campaigns = []
 db = None
-sm_global = None
 
 
-# --- HTTP Server using asyncio HTTP Server (more robust) ---
+# --- HTTP Server ---
 async def handle_http_request(reader, writer):
-    """Handle incoming HTTP requests."""
     try:
         request_data = await reader.read(65536)
         request_text = request_data.decode("utf-8", errors="replace")
         lines = request_text.split("\r\n")
-        
+
         if not lines or not lines[0]:
             writer.close()
             return
@@ -347,42 +344,35 @@ async def handle_http_request(reader, writer):
         method = parts[0] if len(parts) > 0 else "GET"
         path = parts[1] if len(parts) > 1 else "/"
 
-        log.info(f"HTTP {method} {path}")
-
         if path == "/process-campaign" and method == "POST":
-            # Extract body after headers
             body_start = request_text.find("\r\n\r\n")
             if body_start == -1:
                 writer.write(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 22\r\n\r\n{\"error\": \"No body\"}")
                 await writer.drain()
                 writer.close()
                 return
-            
+
             body = request_text[body_start + 4:]
-            log.info(f"Received body: {body[:200]}")
-            
+            log.info(f"HTTP POST /process-campaign body: {body[:300]}")
+
             try:
                 data = json.loads(body)
                 campaign_id = data.get("campaignId")
                 if campaign_id:
                     pending_campaigns.append(campaign_id)
-                    log.info(f"Queued campaign for processing: {campaign_id}")
+                    log.info(f"Queued campaign: {campaign_id}")
                     response = json.dumps({"queued": True, "campaignId": campaign_id})
-                    resp_bytes = f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {len(response)}\r\nConnection: close\r\n\r\n{response}".encode()
-                    writer.write(resp_bytes)
+                    writer.write(f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {len(response)}\r\nConnection: close\r\n\r\n{response}".encode())
                 else:
                     response = json.dumps({"error": "campaignId required"})
-                    resp_bytes = f"HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {len(response)}\r\nConnection: close\r\n\r\n{response}".encode()
-                    writer.write(resp_bytes)
+                    writer.write(f"HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {len(response)}\r\nConnection: close\r\n\r\n{response}".encode())
             except json.JSONDecodeError as e:
                 log.error(f"JSON parse error: {e}")
                 response = json.dumps({"error": "Invalid JSON"})
-                resp_bytes = f"HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {len(response)}\r\nConnection: close\r\n\r\n{response}".encode()
-                writer.write(resp_bytes)
+                writer.write(f"HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {len(response)}\r\nConnection: close\r\n\r\n{response}".encode())
         else:
             response = json.dumps({"status": "worker-ok"})
-            resp_bytes = f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {len(response)}\r\nConnection: close\r\n\r\n{response}".encode()
-            writer.write(resp_bytes)
+            writer.write(f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {len(response)}\r\nConnection: close\r\n\r\n{response}".encode())
 
         await writer.drain()
     except Exception as e:
@@ -403,8 +393,8 @@ async def run_http_server():
 
 # --- Main Polling Loop ---
 async def poll_loop(sm: SelfbotManager):
-    await asyncio.sleep(3)  # Give HTTP server a moment to start
-    
+    await asyncio.sleep(3)
+
     while True:
         try:
             # Process HTTP-triggered campaigns
@@ -415,7 +405,7 @@ async def poll_loop(sm: SelfbotManager):
 
             now_ts = datetime.now(timezone.utc).timestamp()
 
-            # Find channel_messaging campaigns that need processing
+            # Find channel_messaging campaigns needing processing
             campaigns_cursor = db.campaigns.find({
                 "status": "running",
                 "type": "channel_messaging",
@@ -438,7 +428,7 @@ async def poll_loop(sm: SelfbotManager):
             async for rc in reply_campaigns:
                 aid = str(rc["accountId"])
                 if aid not in sm.clients:
-                    log.info(f"DM auto-reply campaign needs login for account {aid}")
+                    log.info(f"DM auto-reply needs login for account {aid}")
                     account = await db.discordaccounts.find_one({"_id": ObjectId(aid)})
                     if account:
                         try:
@@ -469,22 +459,21 @@ async def main():
     log.info(f"Connecting to MongoDB...")
     client = pymongo.AsyncMongoClient(MONGODB_URI)
 
-    # Use get_default_database() which correctly parses the db name from ANY URI type
+    # Use get_default_database() which correctly parses db name from ANY URI
     db = client.get_default_database()
 
     try:
         await client.admin.command("ping")
-        # Get the actual database name being used
         db_name = db.name
         log.info(f"Connected to MongoDB, using database: '{db_name}'")
-        
+
         collections = await db.list_collection_names()
         log.info(f"Collections in database: {collections}")
-        
+
         campaign_count = await db.campaigns.count_documents({})
         account_count = await db.discordaccounts.count_documents({})
         log.info(f"Found {campaign_count} campaigns and {account_count} Discord accounts in DB")
-        
+
     except Exception as e:
         log.error(f"Failed to connect to MongoDB: {e}")
         sys.exit(1)
